@@ -1,0 +1,80 @@
+﻿@page "/checkout"
+@attribute [Authorize]
+@inject OrderState OrderState
+@inject HttpClient HttpClient
+@inject NavigationManager NavigationManager
+@inject IAccessTokenProvider TokenProvider
+@inject IJSRuntime JSRuntime
+
+<div class="main">
+    <EditForm Model="OrderState.Order.DeliveryAddress" OnValidSubmit="PlaceOrder">
+        <div class="checkout-cols">
+            <div class="checkout-order-details">
+                <h4>Review order</h4>
+                <OrderReview Order="OrderState.Order" />
+            </div>
+
+            <div class="checkout-delivery-address">
+                <h4>Deliver to...</h4>
+                <AddressEditor Address="OrderState.Order.DeliveryAddress" />
+            </div>
+        </div>
+
+        <button type="submit" class="checkout-button btn btn-warning" disabled="@isSubmitting">
+            Place order
+        </button>
+
+        <DataAnnotationsValidator />
+    </EditForm>
+</div>
+
+@code {
+    bool isSubmitting;
+
+    protected override void OnInitialized()
+    {
+        // In the background, ask if they want to be notified about order updates
+        _ = RequestNotificationSubscriptionAsync();
+    }
+
+    async Task RequestNotificationSubscriptionAsync()
+    {
+        var tokenResult = await TokenProvider.RequestAccessToken();
+        if (tokenResult.TryGetToken(out var accessToken))
+        {
+            var subscription = await JSRuntime.InvokeAsync<NotificationSubscription>("blazorPushNotifications.requestSubscription");
+            if (subscription != null)
+            {
+                var request = new HttpRequestMessage(HttpMethod.Put, "notifications/subscribe");
+                request.Content = JsonContent.Create(subscription);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken.Value);
+                await HttpClient.SendAsync(request);
+            }
+        }
+        else
+        {
+            NavigationManager.NavigateTo(tokenResult.RedirectUrl);
+        }
+    }
+
+    async Task PlaceOrder()
+    {
+        isSubmitting = true;
+
+        var tokenResult = await TokenProvider.RequestAccessToken();
+        if (tokenResult.TryGetToken(out var accessToken))
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "orders");
+            request.Content = JsonContent.Create(OrderState.Order);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken.Value);
+            var response = await HttpClient.SendAsync(request);
+            var newOrderId = await response.Content.ReadFromJsonAsync<int>();
+            OrderState.ResetOrder();
+            NavigationManager.NavigateTo($"myorders/{newOrderId}");
+        }
+        else
+        {
+            NavigationManager.NavigateTo(tokenResult.RedirectUrl);
+        }
+    }
+}
